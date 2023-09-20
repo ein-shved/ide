@@ -19,6 +19,8 @@
         buildInputs = [ rust-bin.stable.latest.default
                         probe-run
                         rust-analyzer
+                        pkg-config
+                        gtk4
                       ];
         };
     });
