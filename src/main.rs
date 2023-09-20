@@ -1,4 +1,4 @@
-use ide::{Config, Project};
+use ide::{Config, ui};
 use std::env;
 use std::io;
 
@@ -12,7 +12,6 @@ fn main() -> io::Result<()> {
             .expect(&format!("No project {name} found"));
         Err(cfg.exec(&proj))
     } else {
-        println!("Found projects: {:#?}\n", projects.collect::<Vec<Project>>());
-        Ok(())
+        ui::new(projects).run()
     }
 }

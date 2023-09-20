@@ -5,6 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+pub mod ui;
+
 #[derive(Debug)]
 pub struct Project {
     pub name: String,
