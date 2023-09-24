@@ -7,7 +7,7 @@ use std::process::Command;
 
 pub mod ui;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Project {
     pub name: String,
     pub path: PathBuf,

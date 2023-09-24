@@ -8,7 +8,11 @@ pub trait Ui {
 }
 
 pub fn new<Projects: Iterator<Item = Project>>(projects: Projects) -> Box<dyn Ui> {
-    Box::new(Stdout::new(projects))
+    if env::var("GTK").is_ok() {
+        Box::new(gtk::Gtk::new(projects))
+    } else {
+        Box::new(Stdout::new(projects))
+    }
 }
 
 pub struct Stdout {
@@ -57,3 +61,5 @@ impl Stdout {
         }
     }
 }
+
+mod gtk;
