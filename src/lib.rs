@@ -6,52 +6,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 pub mod ui;
+pub mod project;
 
-#[derive(Debug, Clone)]
-pub struct Project {
-    pub name: String,
-    pub path: PathBuf,
-    pub session_file: PathBuf,
-}
-
-fn widthdraw_path_from_session_name(path: &str) -> PathBuf {
-    let mut res = PathBuf::from("/");
-    res.push(path.split("__").collect::<PathBuf>());
-    res
-}
-
-fn widthdraw_path_from_session(path: &PathBuf) -> PathBuf {
-    widthdraw_path_from_session_name(
-        path.file_name()
-            .expect("Invalid session path")
-            .to_str()
-            .unwrap(),
-    )
-}
-
-impl Project {
-    pub fn new(session_file: &str) -> Project {
-        Self::build(PathBuf::from(session_file))
-    }
-
-    pub fn build(session_file: PathBuf) -> Project {
-        let path = widthdraw_path_from_session(&session_file);
-        Project {
-            name: String::from(
-                path.file_name()
-                    .expect("Invalid project session_file {session_file}")
-                    .to_str()
-                    .unwrap(),
-            ),
-            path,
-            session_file,
-        }
-    }
-
-    pub fn get_path(&self) -> &str {
-        &self.path.to_str().unwrap_or("")
-    }
-}
+use project::Project as Project;
 
 pub struct Config {
     sessions_folder: PathBuf,
@@ -106,8 +63,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use crate::{widthdraw_path_from_session, widthdraw_path_from_session_name, Config};
-    use std::path::PathBuf;
+    use super::Config;
 
     #[test]
     fn check_config() {
@@ -115,21 +71,5 @@ mod tests {
         cfg.set_folder("/");
         let prj = cfg.create_project("__tmp__test1__test2");
         assert_eq!(prj.get_path(), "/tmp/test1/test2")
-    }
-
-    #[test]
-    fn check_widthdraw_path_from_session_name() {
-        assert_eq!(
-            widthdraw_path_from_session_name("__tmp__test1__test2"),
-            PathBuf::from("/tmp/test1/test2")
-        )
-    }
-
-    #[test]
-    fn check_widthdraw_path_from_session() {
-        assert_eq!(
-            widthdraw_path_from_session(&PathBuf::from("~/.local//sessions/__tmp__test1__test2")),
-            PathBuf::from("/tmp/test1/test2")
-        )
     }
 }

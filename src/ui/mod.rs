@@ -19,16 +19,6 @@ pub struct Stdout {
     projects: Vec<Project>,
 }
 
-fn get_shift(projects: &Vec<Project>) -> usize {
-    let mut max_shift = 0;
-    for proj in projects {
-        if max_shift < proj.name.len() {
-            max_shift = proj.name.len()
-        }
-    }
-    max_shift
-}
-
 fn print_project(project: &Project, shift: usize) {
     println!(
         "\t{name:<shift$} at {path}",
@@ -38,7 +28,7 @@ fn print_project(project: &Project, shift: usize) {
 }
 
 fn print_projects(projects: &Vec<Project>) {
-    let shift = get_shift(projects);
+    let shift = Project::max_name_length(projects);
 
     for project in projects.iter() {
         print_project(&project, shift);
