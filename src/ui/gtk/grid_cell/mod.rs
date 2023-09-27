@@ -27,4 +27,8 @@ impl GridCell {
     pub fn set_entry(&self, entry: &Entry) {
         self.imp().name.set_text(Some(&entry.name));
     }
+
+    pub fn set_min_chars(&self, chars: u32) {
+        self.imp().name.set_min_chars(chars);
+    }
 }

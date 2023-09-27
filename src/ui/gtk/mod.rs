@@ -2,8 +2,8 @@ mod grid_cell;
 
 use crate::Project;
 
-use crate::ui::gtk::grid_cell::Entry;
-use crate::ui::gtk::grid_cell::GridCell;
+use grid_cell::Entry;
+use grid_cell::GridCell;
 
 use gtk::gio;
 use gtk::glib::BoxedAnyObject;
@@ -12,9 +12,21 @@ use gtk::{glib, Application};
 use gtk4 as gtk;
 
 use std::cell::Ref;
-use std::io;
 use std::rc::Rc;
 
+use super::{Projects, UiFactory, Ui};
+
+pub struct GtkFactory {}
+
+impl UiFactory for GtkFactory {
+    fn new<'a>(&self, projects: Projects<'a>) -> Box<dyn Ui> {
+        Box::new(Gtk {
+            data: Rc::new(GtkData {
+                projects: projects.collect(),
+            }),
+        })
+    }
+}
 pub struct Gtk {
     data: Rc<GtkData>,
 }
@@ -24,21 +36,13 @@ struct GtkData {
 }
 
 impl super::Ui for Gtk {
-    fn run(&self) -> io::Result<()> {
+    fn run(&self) -> Option<Project> {
         self.main();
-        Ok(())
+        None
     }
 }
 
 impl Gtk {
-    pub fn new<Projects: Iterator<Item = Project>>(projects: Projects) -> Gtk {
-        Gtk {
-            data: Rc::new(GtkData {
-                projects: projects.collect(),
-            }),
-        }
-    }
-
     fn main(&self) -> glib::ExitCode {
         let application = Application::builder()
             .application_id("com.example.FirstGtkApp")
@@ -57,6 +61,9 @@ impl Gtk {
             .build();
 
         let store = gio::ListStore::new::<BoxedAnyObject>();
+        let max_name = Project::max_name_length(&data.projects) as u32;
+        let max_path = Project::max_path_length(&data.projects) as u32;
+        let max_path = std::cmp::min(max_path, 100);
 
         for proj in &data.projects {
             store.append(&BoxedAnyObject::new(proj.clone()))
@@ -66,12 +73,12 @@ impl Gtk {
 
         let col1factory = gtk::SignalListItemFactory::new();
         let col2factory = gtk::SignalListItemFactory::new();
+
         col1factory.connect_setup(move |_factory, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             let row = GridCell::new();
             item.set_child(Some(&row));
         });
-
         col1factory.connect_bind(move |_factory, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             let child = item.child().and_downcast::<GridCell>().unwrap();
@@ -80,14 +87,15 @@ impl Gtk {
             let ent = Entry {
                 name: r.name.clone(),
             };
+            child.set_min_chars(max_name);
             child.set_entry(&ent);
         });
+
         col2factory.connect_setup(move |_factory, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             let row = GridCell::new();
             item.set_child(Some(&row));
         });
-
         col2factory.connect_bind(move |_factory, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             let child = item.child().and_downcast::<GridCell>().unwrap();
@@ -96,8 +104,10 @@ impl Gtk {
             let ent = Entry {
                 name: String::from(r.path.to_str().unwrap()),
             };
+            child.set_min_chars(max_path);
             child.set_entry(&ent);
         });
+
         let col1 = gtk::ColumnViewColumn::new(Some("Project"), Some(col1factory));
         let col2 = gtk::ColumnViewColumn::new(Some("Path"), Some(col2factory));
         columnview.append_column(&col1);

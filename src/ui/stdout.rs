@@ -1,33 +1,8 @@
-use crate::Project;
+use super::super::project::Project;
+use super::{UiFactory, Projects, Ui};
 use std::env;
-use std::iter::Iterator;
 
-mod gtk;
-mod stdout;
-
-pub trait Ui {
-    fn run(&self) -> Option<Project>;
-}
-
-type Projects<'a> = &'a mut dyn Iterator<Item = Project>;
-
-pub trait UiFactory {
-    fn new<'a>(&self, projects: Projects<'a>) -> Box<dyn Ui>;
-}
-
-pub fn new() -> Box<dyn UiFactory> {
-    Box::new(gtk::GtkFactory {})
-}
-
-pub fn from(name: &str) -> Option<Box<dyn UiFactory>> {
-    match name {
-        "Gtk" => Some(Box::new(gtk::GtkFactory {})),
-        "Stdout" => Some(Box::new(StdoutFactory {})),
-        _ => None,
-    }
-}
-
-pub struct Stdout {
+struct Stdout {
     projects: Vec<Project>,
 }
 
@@ -65,3 +40,4 @@ impl Ui for Stdout {
         None
     }
 }
+
