@@ -1,11 +1,14 @@
 use paste;
 use std::path::PathBuf;
+use std::fs;
+use std::io;
 
 #[derive(Debug, Clone)]
 pub struct Project {
     pub name: String,
     pub path: PathBuf,
-    pub session_file: PathBuf,
+    pub session_file: Option<PathBuf>,
+    pub exists: bool,
 }
 
 fn widthdraw_path_from_session_name(path: &str) -> PathBuf {
@@ -53,21 +56,44 @@ macro_rules! max_length {
 }
 
 impl Project {
-    pub fn new(session_file: &str) -> Project {
-        Self::build(PathBuf::from(session_file))
+    pub fn from_session_file(session_file: PathBuf) -> Project {
+        let path = widthdraw_path_from_session(&session_file);
+        Self::build(path, Some(session_file))
     }
 
-    pub fn build(session_file: PathBuf) -> Project {
-        let path = widthdraw_path_from_session(&session_file);
+    pub fn from_path(path: &str) -> Project {
+        let path = PathBuf::from(path);
+        Self::build(path, None)
+    }
+
+    fn build(path: PathBuf, session_file: Option<PathBuf>) -> Project {
+        let mut exists = true;
+        let path = match fs::canonicalize(path.clone()) {
+            Ok(path) => path,
+            Err(what) => {
+                println!("Wrong project path detected at '{}': {}",path.to_str().unwrap(), what );
+                exists = false;
+                path
+            },
+        };
         Project {
             name: String::from(
                 path.file_name()
-                    .expect("Invalid project session_file {session_file}")
+                    .expect(&format!("Invalid project path '{}'", path.to_str().unwrap()))
                     .to_str()
                     .unwrap(),
             ),
             path,
             session_file,
+            exists
+        }
+    }
+
+    pub fn rm(&self) -> io::Result<()> {
+        if let Some(session_file) = &self.session_file {
+            fs::remove_file(session_file)
+        } else {
+            Ok(())
         }
     }
 
@@ -77,7 +103,6 @@ impl Project {
 
     max_length!(name);
     max_length!(path);
-    max_length!(session_file);
 }
 
 #[cfg(test)]

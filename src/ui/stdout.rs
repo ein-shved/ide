@@ -6,7 +6,7 @@ struct Stdout {
     projects: Vec<Project>,
 }
 
-struct StdoutFactory {}
+pub struct StdoutFactory {}
 
 impl UiFactory for StdoutFactory {
     fn new<'a>(&self, projects: Projects<'a>) -> Box<dyn Ui> {
@@ -33,7 +33,7 @@ fn print_projects(projects: &Vec<Project>) {
 }
 
 impl Ui for Stdout {
-    fn run(&self) -> Option<Project> {
+    fn run(&mut self) -> Option<Project> {
         println!("Please choose from one of next projects:");
         print_projects(&self.projects);
         println!("And rerun with `{} <project>`", env::args().next().unwrap());

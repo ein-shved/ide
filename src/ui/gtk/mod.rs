@@ -36,7 +36,7 @@ struct GtkData {
 }
 
 impl super::Ui for Gtk {
-    fn run(&self) -> Option<Project> {
+    fn run(&mut self) -> Option<Project> {
         self.main();
         None
     }

@@ -45,14 +45,14 @@ impl Config {
     pub fn create_project(&self, name: &str) -> Project {
         let mut concrete = self.sessions_folder.clone();
         concrete.push(name);
-        Project::build(concrete)
+        Project::from_session_file(concrete)
     }
 
     pub fn get_projects(&self) -> io::Result<Projects> {
         let it = read_dir(&self.sessions_folder)?;
         let it = it.filter_map(|path| -> Option<Project> {
             if let Ok(path) = path {
-                return Some(Project::build(path.path()));
+                return Some(Project::from_session_file(path.path()));
             }
             None
         });
