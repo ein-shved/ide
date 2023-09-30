@@ -22,12 +22,17 @@ impl Config {
     pub fn new() -> Config {
         let home = env::var("HOME").unwrap_or(String::from("."));
         let mut path = PathBuf::from(home);
-        let editor = env::var("EDITOR").unwrap_or(String::from("vim"));
+        let mut editor = env::var("EDITOR").unwrap_or(String::from("vim"));
         let ui_name = env::var("UI");
         let ui = match ui_name {
             Ok(ui_name) => ui::from(&ui_name).expect(&format!("No '{ui_name}' UI available")),
             Err(_) => ui::new(),
         };
+
+        if let Some(e) = ui.preferred_editor()
+        {
+            editor = e;
+        }
 
         path.push(".local/share/nvim/sessions");
 

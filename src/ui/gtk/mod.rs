@@ -33,6 +33,10 @@ impl UiFactory for GtkFactory {
             result: None,
         })
     }
+    fn preferred_editor(&self) -> Option<String>
+    {
+        Some(String::from("neovide"))
+    }
 }
 
 impl super::Ui for Gtk {

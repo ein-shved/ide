@@ -13,6 +13,10 @@ type Projects<'a> = &'a mut dyn Iterator<Item = Project>;
 
 pub trait UiFactory {
     fn new<'a>(&self, projects: Projects<'a>) -> Box<dyn Ui>;
+    fn preferred_editor(&self) -> Option<String>
+    {
+        None
+    }
 }
 
 pub fn new() -> Box<dyn UiFactory> {
