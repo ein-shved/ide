@@ -91,14 +91,12 @@ macro_rules! make_button {
 
 impl GtkWindow {
     fn new(application: &Application, data: RcData) -> GtkWindow {
-        let cl_names = Self::make_cl_names();
-        let cl_paths = Self::make_cl_paths();
         let mut window = GtkWindow {
             data: data.clone(),
             window: Self::make_window(application),
             table: Self::make_table(data.clone()),
-            cl_names,
-            cl_paths,
+            cl_names: Self::make_cl_names(),
+            cl_paths: Self::make_cl_paths(),
             bt_open: Self::make_bt_open(data.clone()),
             bt_new: Self::make_bt_new(data.clone()),
             bt_remove: Self::make_bt_remove(data.clone()),
@@ -241,7 +239,9 @@ impl GtkWindow {
     }
 
     fn with_selection<F, T>(&mut self, f: F) -> Option<T>
-        where F: FnOnce(&mut Self, &gtk::SingleSelection) -> T {
+    where
+        F: FnOnce(&mut Self, &gtk::SingleSelection) -> T,
+    {
         if let Some(model) = self.table.model().as_ref() {
             if let Some(selection) = model.downcast_ref::<gtk::SingleSelection>() {
                 return Some(f(self, selection));
@@ -268,8 +268,7 @@ impl GtkWindow {
         self.result = Some(project);
         self.window.close();
     }
-    fn do_remove(&mut self, index: u32)
-    {
+    fn do_remove(&mut self, index: u32) {
         self.with_selection(|_, selection| {
             let model = selection.model();
             let store_ptr = model.and_downcast_ref::<gio::ListStore>();
@@ -281,7 +280,6 @@ impl GtkWindow {
                 store.remove(index);
             }
         });
-
     }
 }
 

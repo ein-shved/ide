@@ -57,10 +57,8 @@ impl Answer {
             Self::Name(String::from(line))
         }
     }
-    fn to_str(&self) -> String {
-        format!("{}", self)
-    }
 }
+
 impl fmt::Display for Answer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -82,14 +80,14 @@ mod answer_tests {
     fn check_exit() {
         let a = Answer::from("");
         assert!(matches!(a, Answer::Exit));
-        assert_eq!(a.to_str(), "Exit");
+        assert_eq!(a.to_string(), "Exit");
     }
 
     #[test]
     fn check_index() {
         let a = Answer::from("325");
         assert!(matches!(a, Answer::Index(325)));
-        assert_eq!(a.to_str(), "325");
+        assert_eq!(a.to_string(), "325");
     }
 
     #[test]
@@ -102,35 +100,35 @@ mod answer_tests {
     fn check_name() {
         let a = Answer::from("name");
         assert!(matches!(a, Answer::Name(_)));
-        assert_eq!(a.to_str(), "name");
+        assert_eq!(a.to_string(), "name");
     }
 
     #[test]
     fn check_short_name() {
         let a = Answer::from("n");
         assert!(matches!(a, Answer::Name(_)));
-        assert_eq!(a.to_str(), "n");
+        assert_eq!(a.to_string(), "n");
     }
 
     #[test]
     fn check_path() {
         let a = Answer::from("path/name");
         assert!(matches!(a, Answer::Path(_)));
-        assert_eq!(a.to_str(), "path/name");
+        assert_eq!(a.to_string(), "path/name");
     }
 
     #[test]
     fn check_rm() {
         let a = Answer::from("rm path/name");
         assert!(matches!(a, Answer::Remove(_)));
-        assert_eq!(a.to_str(), "Remove path/name");
+        assert_eq!(a.to_string(), "Remove path/name");
     }
 
     #[test]
     fn check_rm_rm() {
         let a = Answer::from("rm rm path/name");
         assert!(matches!(a, Answer::Wrong(_)));
-        assert_eq!(a.to_str(), "rm rm?? Wot??");
+        assert_eq!(a.to_string(), "rm rm?? Wot??");
     }
 }
 
