@@ -5,11 +5,12 @@ use crate::Project;
 use grid_cell::Entry;
 use grid_cell::GridCell;
 
+use gtk4 as gtk;
+use gtk::gdk;
 use gtk::gio;
 use gtk::glib::BoxedAnyObject;
 use gtk::prelude::*;
 use gtk::{glib, Application};
-use gtk4 as gtk;
 
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
@@ -33,8 +34,7 @@ impl UiFactory for GtkFactory {
             result: None,
         })
     }
-    fn preferred_editor(&self) -> Option<String>
-    {
+    fn preferred_editor(&self) -> Option<String> {
         Some(String::from("neovide"))
     }
 }
@@ -177,6 +177,20 @@ impl GtkWindow {
     make_button!(new);
     make_button!(remove);
 
+    fn add_controllers(&mut self) {
+        let controller = gtk::EventControllerKey::new();
+        let data = self.data.clone();
+        controller.connect_key_released(move |_, keyval, _, _| {
+            rc2win!(data).on_key(keyval)
+        });
+        self.window.add_controller(controller);
+
+        let data = self.data.clone();
+        self.table.connect_activate(move |_, num| {
+            rc2win!(data).on_open_at(Some(num));
+        });
+    }
+
     fn construct(&mut self) {
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never) // Disable horizontal scrolling
@@ -206,6 +220,7 @@ impl GtkWindow {
         self.table.append_column(&self.cl_names);
         self.table.append_column(&self.cl_paths);
 
+        self.add_controllers();
         self.window.set_child(Some(&grid));
         self.window.set_resizable(false);
     }
@@ -221,17 +236,24 @@ impl GtkWindow {
         dialog.select_folder(Some(&self.window), cancellable, move |res| {
             if let Ok(res) = res {
                 let res = res.path().unwrap();
-                data.borrow_mut()
-                    .window
-                    .as_mut()
-                    .unwrap()
-                    .do_open(Rc::new(Project::from_path(&res.to_str().unwrap())));
+                rc2win!(data).do_open(Rc::new(Project::from_path(&res.to_str().unwrap())));
             }
         });
     }
 
     fn on_open(&mut self) {
-        if let Some(proj) = self.get_selected() {
+        self.on_open_at(None)
+    }
+
+    fn on_open_at(&mut self, num: Option<u32>) {
+        let mut proj = None;
+        if let Some(num) = num {
+            proj = self.get(num);
+        }
+        if proj.is_none() {
+            proj = self.get_selected();
+        }
+        if let Some(proj) = proj {
             self.do_open(proj);
         }
     }
@@ -240,6 +262,22 @@ impl GtkWindow {
         self.with_selection(|me, selection| {
             me.do_remove(selection.selected());
         });
+    }
+
+    fn on_key(&mut self, keyval: gdk::Key) {
+        use gdk::Key;
+        match keyval {
+            Key::Escape => self.on_exit(),
+            Key::Return => self.on_open(),
+            Key::Delete => self.on_remove(),
+            Key::BackSpace => self.on_remove(),
+            Key::d => self.on_remove(),
+            _ => (),
+        }
+    }
+
+    fn on_exit(&mut self) {
+        self.window.close();
     }
 
     fn with_selection<F, T>(&mut self, f: F) -> Option<T>
@@ -253,10 +291,12 @@ impl GtkWindow {
         };
         None
     }
-
-    fn get_selected(&mut self) -> Option<Rc<Project>> {
-        let proj = self.with_selection(|_, selection| -> Option<Rc<Project>> {
-            let item = selection.selected_item()?;
+    fn get_project_by<F>(&mut self, f: F) -> Option<Rc<Project>>
+    where
+        F: FnOnce(&mut Self, &gtk::SingleSelection) -> Option<glib::object::Object>
+    {
+        let proj = self.with_selection(|me, selection| -> Option<Rc<Project>> {
+            let item = f(me, selection)?;
             let item = item.downcast::<BoxedAnyObject>().unwrap();
             let entry = item.borrow::<Rc<Project>>();
             Some(entry.clone())
@@ -266,6 +306,18 @@ impl GtkWindow {
         } else {
             None
         }
+    }
+
+    fn get_selected(&mut self) -> Option<Rc<Project>> {
+        self.get_project_by(|_, selection| {
+            selection.selected_item()
+        })
+    }
+
+    fn get(&mut self, index: u32) -> Option<Rc<Project>> {
+        self.get_project_by(|_, selection| {
+            selection.item(index)
+        })
     }
 
     fn do_open(&mut self, project: Rc<Project>) {
