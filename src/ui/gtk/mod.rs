@@ -64,13 +64,25 @@ struct GtkWindow {
     cl_names: gtk::ColumnViewColumn,
     cl_paths: gtk::ColumnViewColumn,
 
+    filter_model: gtk::FilterListModel,
+    filter_input: gtk::SearchEntry,
+
+    store: gio::ListStore,
+    selection: gtk::SingleSelection,
+
     bt_open: gtk::Button,
     bt_new: gtk::Button,
     bt_remove: gtk::Button,
+
     result: Option<Rc<Project>>,
 }
 
 macro_rules! rc2win {
+    ( $data:ident ) => {
+        $data.borrow().window.as_ref().unwrap()
+    };
+}
+macro_rules! rc2win_mut {
     ( $data:ident ) => {
         $data.borrow_mut().window.as_mut().unwrap()
     };
@@ -86,7 +98,7 @@ macro_rules! make_button {
                     Some(f) => f.to_uppercase().collect::<String>() + name.as_str(),
                 };
                 let btn = gtk::Button::with_label(&name);
-                btn.connect_clicked(move |_| rc2win!(data).[< on_ $type >]());
+                btn.connect_clicked(move |_| rc2win_mut!(data).[< on_ $type >]());
                 btn
             }
         }
@@ -98,12 +110,21 @@ impl GtkWindow {
         let mut window = GtkWindow {
             data: data.clone(),
             window: Self::make_window(application),
-            table: Self::make_table(data.clone()),
+            table: gtk::ColumnView::new(Option::<gtk::SelectionModel>::None),
+
             cl_names: Self::make_cl_names(),
             cl_paths: Self::make_cl_paths(),
+
+            filter_model: gtk::FilterListModel::builder().build(),
+            filter_input: Self::make_filter_input(data.clone()),
+
+            store: Self::make_store(data.clone()),
+            selection: gtk::SingleSelection::new(Option::<gio::ListModel>::None),
+
             bt_open: Self::make_bt_open(data.clone()),
             bt_new: Self::make_bt_new(data.clone()),
             bt_remove: Self::make_bt_remove(data.clone()),
+
             result: None,
         };
         window.construct();
@@ -130,7 +151,7 @@ impl GtkWindow {
             let child = item.child().and_downcast::<GridCell>().unwrap();
             let entry = item.item().and_downcast::<BoxedAnyObject>().unwrap();
             let r = entry.borrow::<Rc<Project>>().as_ref().name.clone();
-            child.set_min_chars(r.len() as u32);
+            child.set_min_chars(r.len() as u32 + 3);
             let ent = Entry { name: r.clone() };
             child.set_entry(&ent);
         });
@@ -162,33 +183,73 @@ impl GtkWindow {
         gtk::ColumnViewColumn::new(Some("Path"), Some(col2factory))
     }
 
-    fn make_table(data: RcData) -> gtk::ColumnView {
+    fn make_store(data: RcData) -> gio::ListStore {
         let projects = &data.borrow().projects;
         let store = gio::ListStore::new::<BoxedAnyObject>();
         for proj in projects {
             store.append(&BoxedAnyObject::new(proj.clone()))
         }
+        store
+    }
 
-        let sel = gtk::SingleSelection::new(Some(store));
-        gtk::ColumnView::new(Some(sel))
+    fn make_filter_input(data: RcData) -> gtk::SearchEntry {
+        let text = gtk::SearchEntry::builder()
+            .placeholder_text("Filter projects")
+            .build();
+        text.connect_text_notify(move |_| {
+            rc2win!(data).update_filter();
+        });
+        text
+    }
+
+    fn make_filter(&self) -> gtk::CustomFilter {
+        let text = self.filter_input.text();
+        gtk::CustomFilter::new(move |item| {
+            if let Some(item) = item.downcast_ref::<BoxedAnyObject>() {
+                let r: Ref<Rc<Project>> = item.borrow();
+                r.name.contains(&text.to_string())
+                    || r.path.to_str().unwrap().contains(&text.to_string())
+            } else {
+                false
+            }
+        })
     }
 
     make_button!(open);
     make_button!(new);
     make_button!(remove);
 
-    fn add_controllers(&mut self) {
+    fn make_controller(&self, no_remove: bool) -> gtk::EventControllerKey {
         let controller = gtk::EventControllerKey::new();
         let data = self.data.clone();
         controller.connect_key_released(move |_, keyval, _, _| {
-            rc2win!(data).on_key(keyval)
+            rc2win_mut!(data).on_key(keyval, no_remove)
         });
-        self.window.add_controller(controller);
+        controller
+    }
+
+    fn add_controllers(&mut self) {
+        self.table.add_controller(self.make_controller(false));
+        self.window.add_controller(self.make_controller(true));
 
         let data = self.data.clone();
         self.table.connect_activate(move |_, num| {
-            rc2win!(data).on_open_at(Some(num));
+            rc2win_mut!(data).on_open_at(Some(num));
         });
+
+        let data = self.data.clone();
+        self.filter_input.set_key_capture_widget(Some(&self.window));
+        self.filter_input.connect_activate(move |_| {
+            rc2win_mut!(data).on_open();
+        });
+
+        self.filter_input.add_controller(self.make_controller(true));
+    }
+
+    fn set_model(&mut self) {
+        self.filter_model.set_model(Some(&self.store));
+        self.selection.set_model(Some(&self.filter_model));
+        self.table.set_model(Some(&self.selection));
     }
 
     fn construct(&mut self) {
@@ -199,6 +260,8 @@ impl GtkWindow {
         scrolled_window.set_child(Some(&self.table));
         scrolled_window.set_propagate_natural_height(true);
         scrolled_window.set_max_content_height(500);
+
+        let frame = gtk::Frame::builder().child(&scrolled_window).build();
 
         let grid = gtk::Grid::builder()
             .margin_start(6)
@@ -211,16 +274,18 @@ impl GtkWindow {
             .column_spacing(6)
             .build();
 
-        grid.attach(&scrolled_window, 0, 0, 3, 1);
+        grid.attach(&self.filter_input, 0, 0, 3, 1);
+        grid.attach(&frame, 0, 1, 3, 1);
 
-        grid.attach(&self.bt_open, 0, 1, 1, 1);
-        grid.attach(&self.bt_new, 1, 1, 1, 1);
-        grid.attach(&self.bt_remove, 2, 1, 1, 1);
+        grid.attach(&self.bt_open, 0, 2, 1, 1);
+        grid.attach(&self.bt_new, 1, 2, 1, 1);
+        grid.attach(&self.bt_remove, 2, 2, 1, 1);
 
         self.table.append_column(&self.cl_names);
         self.table.append_column(&self.cl_paths);
 
         self.add_controllers();
+        self.set_model();
         self.window.set_child(Some(&grid));
         self.window.set_resizable(false);
     }
@@ -236,7 +301,7 @@ impl GtkWindow {
         dialog.select_folder(Some(&self.window), cancellable, move |res| {
             if let Ok(res) = res {
                 let res = res.path().unwrap();
-                rc2win!(data).do_open(Rc::new(Project::from_path(&res.to_str().unwrap())));
+                rc2win_mut!(data).do_open(Rc::new(Project::from_path(&res.to_str().unwrap())));
             }
         });
     }
@@ -259,19 +324,26 @@ impl GtkWindow {
     }
 
     fn on_remove(&mut self) {
-        self.with_selection(|me, selection| {
-            me.do_remove(selection.selected());
-        });
+        let item = self.selection.selected_item();
+        if let Some(item) = item {
+            let index = self.store.find(&item);
+            let item = item.downcast::<BoxedAnyObject>().unwrap();
+            let entry = item.borrow::<Rc<Project>>();
+            let _ = entry.rm();
+            if let Some(index) = index {
+                self.store.remove(index);
+            }
+        }
     }
 
-    fn on_key(&mut self, keyval: gdk::Key) {
+    fn on_key(&mut self, keyval: gdk::Key, no_remove: bool) {
         use gdk::Key;
         match keyval {
             Key::Escape => self.on_exit(),
             Key::Return => self.on_open(),
-            Key::Delete => self.on_remove(),
-            Key::BackSpace => self.on_remove(),
-            Key::d => self.on_remove(),
+            Key::Delete => if !no_remove { self.on_remove() },
+            Key::BackSpace => if !no_remove { self.on_remove() },
+            Key::d => if !no_remove { self.on_remove() },
             _ => (),
         }
     }
@@ -280,62 +352,37 @@ impl GtkWindow {
         self.window.close();
     }
 
-    fn with_selection<F, T>(&mut self, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut Self, &gtk::SingleSelection) -> T,
-    {
-        if let Some(model) = self.table.model().as_ref() {
-            if let Some(selection) = model.downcast_ref::<gtk::SingleSelection>() {
-                return Some(f(self, selection));
-            }
-        };
-        None
-    }
     fn get_project_by<F>(&mut self, f: F) -> Option<Rc<Project>>
     where
-        F: FnOnce(&mut Self, &gtk::SingleSelection) -> Option<glib::object::Object>
+        F: FnOnce(&gtk::SingleSelection) -> Option<glib::object::Object>,
     {
-        let proj = self.with_selection(|me, selection| -> Option<Rc<Project>> {
-            let item = f(me, selection)?;
-            let item = item.downcast::<BoxedAnyObject>().unwrap();
-            let entry = item.borrow::<Rc<Project>>();
-            Some(entry.clone())
-        });
-        if let Some(proj) = proj {
-            proj
+        let item = f(&self.selection)?;
+        let item = item.downcast::<BoxedAnyObject>();
+        let item = if let Ok(item) = item {
+            Some(item)
         } else {
             None
-        }
+        }?;
+        let entry = item.borrow::<Rc<Project>>();
+        Some(entry.clone())
     }
 
     fn get_selected(&mut self) -> Option<Rc<Project>> {
-        self.get_project_by(|_, selection| {
-            selection.selected_item()
-        })
+        self.get_project_by(|selection| selection.selected_item())
     }
 
     fn get(&mut self, index: u32) -> Option<Rc<Project>> {
-        self.get_project_by(|_, selection| {
-            selection.item(index)
-        })
+        self.get_project_by(|selection| selection.item(index))
     }
 
     fn do_open(&mut self, project: Rc<Project>) {
         self.result = Some(project);
         self.window.close();
     }
-    fn do_remove(&mut self, index: u32) {
-        self.with_selection(|_, selection| {
-            let model = selection.model();
-            let store_ptr = model.and_downcast_ref::<gio::ListStore>();
-            let store = store_ptr.unwrap();
-            if let Some(item) = selection.selected_item() {
-                let item = item.downcast::<BoxedAnyObject>().unwrap();
-                let entry = item.borrow::<Rc<Project>>();
-                let _ = entry.rm();
-                store.remove(index);
-            }
-        });
+
+    fn update_filter(&self) {
+        let filter = self.make_filter();
+        self.filter_model.set_filter(Some(&filter));
     }
 }
 
