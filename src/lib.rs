@@ -29,8 +29,7 @@ impl Config {
             Err(_) => ui::new(),
         };
 
-        if let Some(e) = ui.preferred_editor()
-        {
+        if let Some(e) = ui.preferred_editor() {
             editor = e;
         }
 
@@ -73,9 +72,12 @@ impl Config {
     }
 
     pub fn exec_from(&self, mut projects: Projects, proj_name: &str) -> io::Result<()> {
-        let proj = projects
-            .find(|proj| proj.name == proj_name)
-            .expect(&format!("No project {proj_name} found"));
+        let proj = projects.find(|proj| proj.name == proj_name);
+        let proj = if let Some(proj) = proj {
+            proj
+        } else {
+            Project::from_path(proj_name)
+        };
         Err(self.exec(&proj))
     }
 
