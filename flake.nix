@@ -2,7 +2,10 @@
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    rust-overlay.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      flake-utils.follows = "flake-utils";
+    };
     # TODO(Shvedov) Required unstable channel fot rust >= 1.70
     nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
   };
