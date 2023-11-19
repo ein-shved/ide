@@ -7,8 +7,9 @@ use std::process::Command;
 
 pub mod project;
 pub mod ui;
+pub mod protocol;
 
-use project::Project;
+pub use project::Project;
 
 type Projects = Box<dyn Iterator<Item = Project>>;
 

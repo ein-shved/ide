@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::fs;
 use std::io;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Project {
     pub name: String,
     pub path: PathBuf,

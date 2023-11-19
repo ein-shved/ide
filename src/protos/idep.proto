@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+message Project {
+    enum State {
+        PROJECT_IDLE = 0;
+        PROJECT_SERVING = 1;
+    }
+    string name = 1;
+    string path = 2;
+    string last_modified = 3;
+    State state = 4;
+    optional string socket = 5;
+}
+
+message Request {
+    message ListProjects {};
+    message NewProject {
+        string path = 1;
+    }
+    message DeleteProject {
+        string path = 1;
+    }
+    message ServeProject {
+        string path = 1;
+    }
+    oneof what {
+        ListProjects list_projects = 1;
+        NewProject new_project = 2;
+        DeleteProject delete_project = 3;
+        ServeProject serve_project = 4;
+    }
+}
+
+enum Status {
+    OK = 0;
+    WRONG_PROTOCOL = 1;
+    WRONG_PROJECT = 2;
+    WRONG_PATH = 3;
+    INTERNAL_ERROR = 4;
+}
+
+message ListProjectsResponse {
+    Status status = 1;
+    repeated Project projects = 2;
+}
+
+message NewProjectResponse {
+    Status status = 1;
+    Project project = 2;
+}
+
+message DeleteProjectResponse {
+    Status status = 1;
+    string path = 2;
+}
+
+message ServeProjectResponse {
+    Status status = 1;
+}
+
+message OnUpdate {
+    message NewProject {
+        string path = 1;
+    }
+    message DeleteProject {
+        string path = 1;
+    }
+    message ProjectStateChanged {
+        string path = 1;
+        Project.State new_state = 2;
+    }
+    oneof what {
+        NewProject new_project = 2;
+        DeleteProject delete_project = 3;
+        ProjectStateChanged project_state_changed = 4;
+    }
+}

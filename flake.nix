@@ -28,6 +28,7 @@
           pkg-config
           wrapGAppsHook4
         ];
+        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
       rec {
         packages = rec {
@@ -50,13 +51,13 @@
         };
         devShells.default = with pkgs; mkShellNoCC {
           buildInputs = [
-            rust-bin.stable.latest.default
-            probe-run
-            rust-analyzer
+            rust
+            rust-analyzer-unwrapped
           ] ++ buildInputs ++ nativeBuildInputs;
           shellHook = ''
             export XDG_DATA_DIRS=$GSETTINGS_SCHEMAS_PATH
           '';
+          RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
         };
       }
     );
