@@ -1,4 +1,8 @@
 {
+  description = ''
+    Simple NVIM-IDE launcher based on
+    (Neovim-Session-Manager)https://github.com/Shatur/neovim-session-manager
+  '';
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
@@ -29,7 +33,7 @@
         packages = rec {
           ide-manager = pkgs.rustPlatform.buildRustPackage rec {
             pname = "ide-manager";
-            version = "0.2";
+            version = "0.3.0";
             inherit nativeBuildInputs buildInputs;
             src = with builtins; path {
               filter = (path: type:
