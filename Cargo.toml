@@ -9,6 +9,7 @@ gtk4 = { version = "0.7.2", features = [ "v4_10" ] }
 paste = { }
 protobuf = { }
 tokio = { features = [ "full" ] }
+byteorder = { }
 
 [build-dependencies]
 protobuf-codegen = { }
