@@ -1,67 +1,66 @@
-use super::{Stream, Message};
-use std::{rc::Rc, cell::RefCell};
-use std::collections::VecDeque;
-use std::io;
-use super::{Frame, FrameType, idep};
+use super::{idep, Frame, FrameType};
+use super::{Message, Stream};
 use protobuf::Message as _;
+use std::io;
+use std::{cell::RefCell, rc::Rc};
+use std::collections::VecDeque;
+use tokio::sync::mpsc;
 
-type StreamQueue = Rc<RefCell<Vec<u8>>>;
+pub type VirtualStream = Rc<RefCell<VirtualStreamQueue>>;
 
-#[derive(Default)]
-pub struct VirtualStreamBuilder
-{
-    left: StreamQueue,
-    right: StreamQueue
+pub struct VirtualStreamBuilder {
+    left: VirtualStream,
+    right: VirtualStream,
 }
 
-pub struct VirtualStream
-{
-    write_queue: StreamQueue,
-    read_queue: StreamQueue,
+pub struct VirtualStreamQueue {
+    tx: mpsc::Sender<Message>,
+    rx: mpsc::Receiver<Message>,
+}
+
+
+impl Stream for VirtualStreamQueue {
+    async fn write(&mut self, msg: Message) -> io::Result<()> {
+        self.tx.send(msg).await.unwrap();
+        Ok(())
+    }
+    async fn read(&mut self) -> io::Result<Message> {
+        Ok(self.rx.recv().await.unwrap())
+    }
 }
 
 impl Stream for VirtualStream {
-    async fn write(&mut self, msg: Message) -> io::Result<()>
-    {
-        self.write_queue.borrow_mut().append(&mut msg.into());
-        Ok(())
+    async fn write(&mut self, msg: Message) -> io::Result<()> {
+        self.borrow_mut().write(msg).await
     }
-    async fn read(&mut self) -> io::Result<Message>
-    {
-        let mut msg = Message::new();
-        std::mem::swap(
-            &mut msg,
-            &mut *self.read_queue.borrow_mut());
-        Ok(msg)
-    }
-}
-
-impl VirtualStream {
-    pub fn new(write_queue: StreamQueue, read_queue: StreamQueue) -> Self
-    {
-        Self { write_queue, read_queue }
+    async fn read(&mut self) -> io::Result<Message> {
+        self.borrow_mut().read().await
     }
 }
 
 impl VirtualStreamBuilder {
-    pub fn make_left(&self) -> VirtualStream
-    {
-        VirtualStream::new(self.left.clone(), self.right.clone())
+    pub fn new() -> VirtualStreamBuilder {
+        let (ltx, lrx) = mpsc::channel::<Message>(16);
+        let (rtx, rrx) = mpsc::channel::<Message>(16);
+        VirtualStreamBuilder {
+            left: Rc::new(RefCell::new(VirtualStreamQueue { tx: ltx, rx: rrx })),
+            right: Rc::new(RefCell::new(VirtualStreamQueue { tx: rtx, rx: lrx })),
+        }
+    }
+    pub fn make_left(&self) -> VirtualStream {
+        self.left.clone()
     }
 
-    pub fn make_right(&self) -> VirtualStream
-    {
-        VirtualStream::new(self.right.clone(), self.left.clone())
+    pub fn make_right(&self) -> VirtualStream {
+        self.right.clone()
     }
 
-    pub fn make(&self) -> (VirtualStream, VirtualStream)
-    {
+    pub fn make(&self) -> (VirtualStream, VirtualStream) {
         (self.make_left(), self.make_right())
     }
 
-    pub fn new_streams() ->(VirtualStream, VirtualStream)
-    {
-        VirtualStreamBuilder::default().make()
+    pub fn new_streams() -> (VirtualStream, VirtualStream) {
+        VirtualStreamBuilder::new().make()
     }
 }
 
@@ -167,4 +166,3 @@ impl<S: Stream> PackageStream<S> {
         self.write_package(FrameType::Response, seq_id, rsp).await
     }
 }
-

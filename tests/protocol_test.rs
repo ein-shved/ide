@@ -2,6 +2,7 @@ use ide::protocol::*;
 use protobuf::Message as _;
 use std::collections::VecDeque;
 use std::{io, path::PathBuf};
+use futures::join;
 
 struct TestStreamError
 {
@@ -150,6 +151,8 @@ async fn client_list_projects() {
     };
     let mut client = Client::new(TestStreamHandy::new(write, read));
     let res = client.list_projects().await;
+    assert!(res.is_ok());
+    let res = res.unwrap();
     assert_eq!(write_called, 1);
     assert_eq!(read_called, 1);
     assert_eq!(prjcts[0], res[0]);
@@ -193,14 +196,19 @@ async fn server_list_projects_next() {
     assert_eq!(read_called, 1);
 }
 
-//#[tokio::test]
-//async fn server_client_list_projects() {
-//    let (left, right) = streams::VirtualStreamBuilder::new_streams();
-//    let prjcts = make_test_projects();
-//
-//    let mut client = Client::new(left);
-//    let mut server = Server::new(right, prjcts.clone());
-//
-//    let res = client.list_projects().await;
-//    assert_eq!(res, prjcts);
-//}
+#[tokio::test]
+async fn server_client_list_projects() {
+    let (left, right) = streams::VirtualStreamBuilder::new_streams();
+    let prjcts = make_test_projects();
+
+    let mut client = Client::new(left);
+    let mut server = Server::new(right, prjcts.clone());
+
+    let next = server.next();
+    let res = client.list_projects();
+
+    let (next, res) = join!(next, res);
+    assert!(next.is_ok());
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap(), prjcts);
+}

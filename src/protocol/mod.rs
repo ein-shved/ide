@@ -125,16 +125,16 @@ impl<S: Stream> Client<S> {
         Self { stream: stream.into() }
     }
 
-    pub async fn list_projects(&mut self) -> Projects {
+    pub async fn list_projects(&mut self) -> io::Result<Projects> {
         let mut req = Request::new();
         req.set_list_projects(idep::request::ListProjects::new());
-        let send_seq = self.stream.write_request(req).await.unwrap();
-        let (typ, seq, rsp) = self.stream.read_package().await.unwrap();
+        let send_seq = self.stream.write_request(req).await?;
+        let (typ, seq, rsp) = self.stream.read_package().await?;
         if seq != send_seq || typ != FrameType::Response {
             panic!("Unexpected response")
         }
-        let rsp = ListProjectsResponse::parse_from_bytes(&rsp).unwrap();
-        rsp.into()
+        let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
+        Ok(rsp.into())
     }
 }
 

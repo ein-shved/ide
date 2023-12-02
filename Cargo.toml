@@ -10,6 +10,7 @@ paste = { }
 protobuf = { }
 tokio = { features = [ "full" ] }
 byteorder = { }
+futures = { }
 
 [build-dependencies]
 protobuf-codegen = { }
