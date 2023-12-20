@@ -11,7 +11,7 @@
       flake-utils.follows = "flake-utils";
     };
     # TODO(Shvedov) Required unstable channel fot rust >= 1.70
-    nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
+    nixpkgs.url = github:NixOS/nixpkgs/nixos-23.11;
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
