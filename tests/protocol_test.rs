@@ -1,21 +1,23 @@
+use futures::join;
 use ide::protocol::*;
 use protobuf::Message as _;
 use std::collections::VecDeque;
 use std::{io, path::PathBuf};
-use futures::join;
 
-struct TestStreamError
+struct TestStreamError {}
+
+fn mk_test_error<T>() -> io::Result<T>
 {
+    io::Result::Err(io::Error::new(io::ErrorKind::Unsupported, "TEST"))
 }
 
-impl Stream for TestStreamError
-{
-    async fn write(&mut self, msg: Message) -> io::Result<()> {
-        io::Result::Err(io::Error::new(io::ErrorKind::Unsupported, "TEST"))
+impl Stream for TestStreamError {
+    async fn write(&mut self, _: Message) -> io::Result<()> {
+        mk_test_error()
     }
 
     async fn read(&mut self) -> io::Result<Message> {
-        io::Result::Err(io::Error::new(io::ErrorKind::Unsupported, "TEST"))
+        mk_test_error()
     }
 }
 
@@ -162,7 +164,7 @@ async fn client_list_projects() {
 #[tokio::test]
 async fn server_list_projects() {
     let prjcts = make_test_projects();
-    let server = Server::new(TestStreamError{}, prjcts.clone());
+    let server = Server::new(TestStreamError {}, prjcts.clone());
     let res = server.list_projects();
     assert!(res.is_ok());
     let res = idep::ListProjectsResponse::parse_from_bytes(&res.unwrap());
@@ -211,4 +213,64 @@ async fn server_client_list_projects() {
     assert!(next.is_ok());
     assert!(res.is_ok());
     assert_eq!(res.unwrap(), prjcts);
+}
+
+fn mk_bidir_stream<R, U, Rd, Wr>(
+    r: R,
+    u: U,
+    wr: Wr,
+    rd: Rd,
+) -> streams::BidirectStream<TestStreamHandy<Wr, Rd>, R, U>
+where
+    R: FnMut(idep::Request) -> io::Result<Message>,
+    U: FnMut(idep::OnUpdate) -> io::Result<()>,
+    Wr: FnMut(FrameType, Message) -> io::Result<()>,
+    Rd: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    let stream = TestStreamHandy::new(wr, rd);
+    streams::BidirectStream::new(stream, r, u)
+}
+
+#[tokio::test]
+async fn bidir_stream_request()
+{
+    let mut request = idep::Request::new();
+    request.set_list_projects(idep::request::ListProjects::new());
+    let mut on_req_called = 0;
+    let mut on_upd_called = 0;
+    let mut on_wr_called = 0;
+    let mut on_rd_called = 0;
+    let prjcts = make_test_projects();
+
+    let stream = mk_bidir_stream (
+        |_| {
+            on_req_called += 1;
+            mk_test_error::<Message>()
+        },
+        |_| {
+            on_upd_called += 1;
+            mk_test_error::<()>()
+        },
+        |typ, msg| {
+            on_wr_called += 1;
+            assert_eq!(typ, FrameType::Request);
+            assert_eq!(idep::Request::parse_from_bytes(&msg).unwrap(), request);
+            Ok(())
+        },
+        || {
+            on_rd_called += 1;
+            Ok((FrameType::Response,
+                idep::ListProjectsResponse::from(&prjcts).write_to_bytes().unwrap()))
+        }
+    );
+
+    let rsp = stream.request(request.clone());
+    let next = stream.next();
+
+    let (rsp, next) = join!(rsp, next);
+    assert!(rsp.is_ok());
+    assert!(next.is_ok());
+    let rsp = idep::ListProjectsResponse::parse_from_bytes(&rsp.unwrap());
+
+    assert_eq!(rsp.unwrap(), idep::ListProjectsResponse::from(&prjcts));
 }

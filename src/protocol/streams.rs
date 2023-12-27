@@ -1,9 +1,12 @@
+use super::idep::on_update;
 use super::{idep, Frame, FrameType};
 use super::{Message, Stream};
+use gtk4::cairo::ffi::cairo_device_flush;
 use protobuf::Message as _;
-use std::io;
-use std::{cell::RefCell, rc::Rc};
 use std::collections::VecDeque;
+use std::error::Error as _;
+use std::{io, default};
+use std::{cell::RefCell, rc::Rc};
 use tokio::sync::mpsc;
 
 pub type VirtualStream = Rc<RefCell<VirtualStreamQueue>>;
@@ -17,7 +20,6 @@ pub struct VirtualStreamQueue {
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
 }
-
 
 impl Stream for VirtualStreamQueue {
     async fn write(&mut self, msg: Message) -> io::Result<()> {
@@ -164,5 +166,72 @@ impl<S: Stream> PackageStream<S> {
     }
     pub async fn send_response(&mut self, seq_id: u8, rsp: Message) -> io::Result<()> {
         self.write_package(FrameType::Response, seq_id, rsp).await
+    }
+}
+
+type CachedRequest = tokio::sync::oneshot::Sender<io::Result<Message>>;
+
+pub struct BidirectStream<S, R, U>
+where
+    S: Stream,
+    R: FnMut(idep::Request) -> io::Result<Message>,
+    U: FnMut(idep::OnUpdate) -> io::Result<()>,
+{
+    stream: PackageStream<S>,
+    requests: std::collections::BTreeMap<u8, CachedRequest>,
+    on_request: R,
+    on_update: U,
+}
+
+impl<S, R, U> BidirectStream<S, R, U>
+where
+    S: Stream,
+    R: FnMut(idep::Request) -> io::Result<Message>,
+    U: FnMut(idep::OnUpdate) -> io::Result<()>,
+{
+    pub fn new (stream: S, on_request: R, on_update: U) -> Self {
+        Self {
+            stream: stream.into(),
+            on_request,
+            on_update,
+            requests: std::collections::BTreeMap::<u8, CachedRequest>::default(),
+        }
+    }
+    pub async fn request(&mut self, req: idep::Request) -> io::Result<Message> {
+        let seq_id = self.stream.write_request(req).await?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<io::Result<Message>>();
+        self.requests.insert(seq_id, tx);
+        rx.await.unwrap()
+    }
+
+    pub async fn next(&mut self) -> io::Result<()> {
+        let (typ, seq_id, msg) = self.stream.read_package().await?;
+        match typ {
+            FrameType::Response => self.process_response(seq_id, msg).await,
+            FrameType::Request => self.process_request(seq_id, msg).await,
+            FrameType::Notify => self.process_update(msg).await,
+        }
+    }
+
+    async fn process_response(&mut self, seq_id: u8, msg: Message) -> io::Result<()> {
+        let req = self.requests.remove(&seq_id);
+        if let Some(req) = req {
+            req.send(Ok(msg)).unwrap();
+            Ok(())
+        } else {
+            io::Result::Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Wrong seq_id in response",
+            ))
+        }
+    }
+    async fn process_request(&mut self, seq_id: u8, msg: Message) -> io::Result<()> {
+        let req = idep::Request::parse_from_bytes(&msg)?;
+        let rsp = (self.on_request)(req)?;
+        self.stream.write_package(FrameType::Response, seq_id, rsp).await
+    }
+    async fn process_update(&mut self, msg: Message) -> io::Result<()> {
+        let upd = idep::OnUpdate::parse_from_bytes(&msg)?;
+        (self.on_update)(upd)
     }
 }
