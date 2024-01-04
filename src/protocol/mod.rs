@@ -7,7 +7,7 @@ use byteorder::{ByteOrder as _, NetworkEndian as NE};
 use idep::{ListProjectsResponse, Request};
 use protobuf::Message as _;
 use std::io;
-use streams::PackageStream;
+use streams::BidirectStream;
 
 pub type Message = Vec<u8>;
 type Projects = Vec<Project>;
@@ -71,9 +71,12 @@ impl From<FrameType> for u8 {
     }
 }
 
-pub trait Stream {
-    async fn write(&mut self, msg: Message) -> io::Result<()>;
-    async fn read(&mut self) -> io::Result<Message>;
+pub trait  Sender {
+    async fn send(&mut self, msg: Message) -> io::Result<()>;
+}
+
+pub trait Receiver {
+    async fn recv(&mut self) -> io::Result<Message>;
 }
 
 impl From<idep::Project> for Project {
@@ -116,37 +119,37 @@ impl From<&Projects> for ListProjectsResponse {
     }
 }
 
-pub struct Client<S: Stream> {
-    stream: PackageStream<S>,
+pub struct Client<S: Sender, R: Receiver> {
+    stream: BidirectStream<S, R>,
 }
 
-impl<S: Stream> Client<S> {
-    pub fn new(stream: S) -> Self {
-        Self { stream: stream.into() }
+impl<S: Sender, R: Receiver> Client<S, R> {
+    pub fn new(s: S, r: R) -> Self {
+        Self { stream: BidirectStream::new(s, r) }
     }
 
-    pub async fn list_projects(&mut self) -> io::Result<Projects> {
-        let mut req = Request::new();
-        req.set_list_projects(idep::request::ListProjects::new());
-        let send_seq = self.stream.write_request(req).await?;
-        let (typ, seq, rsp) = self.stream.read_package().await?;
-        if seq != send_seq || typ != FrameType::Response {
-            panic!("Unexpected response")
-        }
-        let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
-        Ok(rsp.into())
-    }
+    //pub async fn list_projects(&mut self) -> io::Result<Projects> {
+    //    let mut req = Request::new();
+    //    req.set_list_projects(idep::request::ListProjects::new());
+    //    let send_seq = self.stream.write_request(req).await?;
+    //    let (typ, seq, rsp) = self.stream.read_package().await?;
+    //    if seq != send_seq || typ != FrameType::Response {
+    //        panic!("Unexpected response")
+    //    }
+    //    let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
+    //    Ok(rsp.into())
+    //}
 }
 
-pub struct Server<S: Stream> {
-    stream: PackageStream<S>,
+pub struct Server<S: Sender, R: Receiver> {
+    stream: BidirectStream<S, R>,
     projects: Projects,
 }
 
-impl<S: Stream> Server<S> {
-    pub fn new(stream: S, projects: Projects) -> Self {
+impl<S: Sender, R: Receiver> Server<S, R> {
+    pub fn new(s: S, r: R, projects: Projects) -> Self {
         Self {
-            stream: stream.into(),
+            stream: BidirectStream::new(s, r),
             projects,
         }
     }
@@ -156,16 +159,16 @@ impl<S: Stream> Server<S> {
         Ok(rsp.write_to_bytes()?)
     }
 
-    pub async fn next(&mut self) -> io::Result<()> {
-        let (typ, seq, msg) = self.stream.read_package().await?;
-        if typ == FrameType::Request {
-            let req = Request::parse_from_bytes(&msg)?;
-            if req.has_list_projects() {
-                self.stream.send_response(seq, self.list_projects()?).await?;
-            }
-            Ok(())
-        } else {
-            Ok(()) // TODO(Shvedov)
-        }
-    }
+    //pub async fn next(&mut self) -> io::Result<()> {
+    //    let (typ, seq, msg) = self.stream.read_package().await?;
+    //    if typ == FrameType::Request {
+    //        let req = Request::parse_from_bytes(&msg)?;
+    //        if req.has_list_projects() {
+    //            self.stream.send_response(seq, self.list_projects()?).await?;
+    //        }
+    //        Ok(())
+    //    } else {
+    //        Ok(()) // TODO(Shvedov)
+    //    }
+    //}
 }

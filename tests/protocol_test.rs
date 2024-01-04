@@ -4,73 +4,93 @@ use protobuf::Message as _;
 use std::collections::VecDeque;
 use std::{io, path::PathBuf};
 
-struct TestStreamError {}
-
 fn mk_test_error<T>() -> io::Result<T>
 {
     io::Result::Err(io::Error::new(io::ErrorKind::Unsupported, "TEST"))
 }
 
-impl Stream for TestStreamError {
-    async fn write(&mut self, _: Message) -> io::Result<()> {
-        mk_test_error()
-    }
-
-    async fn read(&mut self) -> io::Result<Message> {
+struct TestSenderError {}
+impl Sender for TestSenderErrorr {
+    async fn send(&mut self, _: Message) -> io::Result<()> {
         mk_test_error()
     }
 }
 
-struct TestStream<W, R>
+struct TestReceiverError {}
+impl Receiver for TestReceiverErrorr {
+
+    async fn recv(&mut self) -> io::Result<Message> {
+        mk_test_error()
+    }
+}
+
+struct TestSender<S>
 where
-    W: FnMut(Message) -> io::Result<()>,
+    S: FnMut(Message) -> io::Result<()>,
+{
+    s: S,
+}
+
+impl<S> Sender for TestSender<S>
+where
+    S: FnMut(Message) -> io::Result<()>,
+{
+    async fn send(&mut self, msg: Message) -> io::Result<()> {
+        (self.w)(msg)
+    }
+}
+
+impl<S> From<S> for TestSender<S>
+where
+    S: FnMut(Message) -> io::Result<()>,
+{
+    fn from(s: S) -> Self {
+        Self { s }
+    }
+}
+
+struct TestReceiver<R>
+where
     R: FnMut() -> io::Result<Message>,
 {
-    w: W,
     r: R,
 }
 
-impl<W, R> Stream for TestStream<W, R>
+impl<R> Receiver for TestReceiver<R>
 where
-    W: FnMut(Message) -> io::Result<()>,
     R: FnMut() -> io::Result<Message>,
 {
-    async fn write(&mut self, msg: Message) -> io::Result<()> {
-        (self.w)(msg)
-    }
-
-    async fn read(&mut self) -> io::Result<Message> {
+    async fn recv(&mut self) -> io::Result<Message> {
         (self.r)()
     }
 }
 
-impl<W, R> TestStream<W, R>
+impl<R> From<R> for TestReceiver<R>
 where
-    W: FnMut(Message) -> io::Result<()>,
     R: FnMut() -> io::Result<Message>,
 {
-    pub fn new(w: W, r: R) -> Self {
-        Self { w, r }
+    fn from(r: R) -> Self {
+        Self { r }
     }
 }
 
-struct TestStreamHandy<W, R>
+struct TestStreamHandy<S, R>
 where
-    W: FnMut(FrameType, Message) -> io::Result<()>,
+    S: FnMut(FrameType, Message) -> io::Result<()>,
     R: FnMut() -> io::Result<(FrameType, Message)>,
 {
-    w: W,
+    s: S,
     r: R,
     cache: VecDeque<u8>,
     secs: Vec<u8>,
 }
 
-impl<W, R> Stream for TestStreamHandy<W, R>
+impl<S, R> Sender for TestStreamHandy<S, R>
 where
-    W: FnMut(FrameType, Message) -> io::Result<()>,
+    S: FnMut(FrameType, Message) -> io::Result<()>,
     R: FnMut() -> io::Result<(FrameType, Message)>,
 {
-    async fn write(&mut self, msg: Message) -> io::Result<()> {
+    async fn send(&mut self, msg: Message) -> io::Result<()> {
         self.cache.append(&mut msg.into());
         if self.cache.len() < Frame::len() {
             return Ok(());
@@ -81,10 +101,16 @@ where
         }
         self.secs.push(frame.seq_id);
         self.cache.drain(0..Frame::len());
-        (self.w)(frame.typ, self.cache.drain(0..frame.len as usize).collect())
+        (self.s)(frame.typ, self.cache.drain(0..frame.len as usize).collect())
     }
+}
 
-    async fn read(&mut self) -> io::Result<Message> {
+impl<S, R> Receiver for TestStreamHandy<S, R>
+where
+    S: FnMut(FrameType, Message) -> io::Result<()>,
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    async fn recv(&mut self) -> io::Result<Message> {
         let (typ, mut msg) = (self.r)()?;
         let seq_id = if typ == FrameType::Response {
             self.secs.pop().unwrap_or(1)
@@ -105,7 +131,7 @@ where
 {
     pub fn new(w: W, r: R) -> Self {
         Self {
-            w,
+            s: w,
             r,
             cache: VecDeque::<u8>::default(),
             secs: Vec::<u8>::default(),
