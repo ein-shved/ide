@@ -28,6 +28,16 @@ where
     m_sender: mpsc::Sender<Notice>,
 }
 
+impl<S, R> From<(S, R)> for BidirectStream<S, R>
+where
+    S: Sender,
+    R: Receiver,
+{
+    fn from(value: (S, R)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
 impl<S, R> BidirectStream<S, R>
 where
     S: Sender,
@@ -44,7 +54,7 @@ where
         }
     }
 
-    pub async fn next<Rq, Up>(&mut self, rq: &mut Rq, up: &mut Up) -> io::Result<()>
+    pub async fn next<Rq, Up>(&mut self, rq: Option<Rq>, up: Option<Up>) -> io::Result<()>
     where
         Rq: OnRequestH,
         Up: OnUpdateH,
@@ -64,7 +74,7 @@ where
         result
     }
 
-    pub fn get_sender(self) -> BidirectSender {
+    pub fn get_sender(&self) -> BidirectSender {
         BidirectSender {
             sender: self.m_sender.clone(),
         }
@@ -87,18 +97,23 @@ where
         &mut self,
         seq_id: u8,
         msg: Message,
-        rq: &mut Rq,
+        rq: Option<Rq>,
     ) -> io::Result<()> {
         let req = idep::Request::parse_from_bytes(&msg)?;
-        let rsp = rq(req)?;
+        // TODO(Shvedov) process errors
+        let rsp = rq.unwrap()(req)?;
         self.sender
             .write_package(FrameType::Response, seq_id, rsp)
             .await
     }
 
-    async fn process_update<Up: OnUpdateH>(&mut self, msg: Message, up: &mut Up) -> io::Result<()> {
+    async fn process_update<Up: OnUpdateH>(
+        &mut self,
+        msg: Message,
+        up: Option<Up>,
+    ) -> io::Result<()> {
         let upd = idep::OnUpdate::parse_from_bytes(&msg)?;
-        up(upd)
+        up.unwrap()(upd)
     }
 
     async fn send_request(&mut self, req: idep::Request, cache: CachedRequest) -> io::Result<()> {

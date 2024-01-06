@@ -2,23 +2,21 @@ use futures::join;
 use ide::protocol::*;
 use protobuf::Message as _;
 use std::collections::VecDeque;
-use std::{io, path::PathBuf};
+use std::{cell::RefCell, io, rc::Rc};
 
-fn mk_test_error<T>() -> io::Result<T>
-{
+fn mk_test_error<T>() -> io::Result<T> {
     io::Result::Err(io::Error::new(io::ErrorKind::Unsupported, "TEST"))
 }
 
 struct TestSenderError {}
-impl Sender for TestSenderErrorr {
+impl Sender for TestSenderError {
     async fn send(&mut self, _: Message) -> io::Result<()> {
         mk_test_error()
     }
 }
 
 struct TestReceiverError {}
-impl Receiver for TestReceiverErrorr {
-
+impl Receiver for TestReceiverError {
     async fn recv(&mut self) -> io::Result<Message> {
         mk_test_error()
     }
@@ -36,7 +34,7 @@ where
     S: FnMut(Message) -> io::Result<()>,
 {
     async fn send(&mut self, msg: Message) -> io::Result<()> {
-        (self.w)(msg)
+        (self.s)(msg)
     }
 }
 
@@ -74,21 +72,18 @@ where
     }
 }
 
-struct TestStreamHandy<S, R>
+struct TestSenderHandy<S>
 where
     S: FnMut(FrameType, Message) -> io::Result<()>,
-    R: FnMut() -> io::Result<(FrameType, Message)>,
 {
     s: S,
-    r: R,
     cache: VecDeque<u8>,
-    secs: Vec<u8>,
+    pub secs: Rc<RefCell<Vec<u8>>>,
 }
 
-impl<S, R> Sender for TestStreamHandy<S, R>
+impl<S> Sender for TestSenderHandy<S>
 where
     S: FnMut(FrameType, Message) -> io::Result<()>,
-    R: FnMut() -> io::Result<(FrameType, Message)>,
 {
     async fn send(&mut self, msg: Message) -> io::Result<()> {
         self.cache.append(&mut msg.into());
@@ -99,21 +94,41 @@ where
         if self.cache.len() < Frame::len() + frame.len as usize {
             return Ok(());
         }
-        self.secs.push(frame.seq_id);
+        self.secs.borrow_mut().push(frame.seq_id);
         self.cache.drain(0..Frame::len());
         (self.s)(frame.typ, self.cache.drain(0..frame.len as usize).collect())
     }
 }
 
-impl<S, R> Receiver for TestStreamHandy<S, R>
+impl<S> From<S> for TestSenderHandy<S>
 where
     S: FnMut(FrameType, Message) -> io::Result<()>,
+{
+    fn from(w: S) -> Self {
+        Self {
+            s: w,
+            cache: VecDeque::<u8>::default(),
+            secs: Rc::new(RefCell::new(Vec::<u8>::default())),
+        }
+    }
+}
+
+struct TestReceiverHandy<R>
+where
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    r: R,
+    secs: Rc<RefCell<Vec<u8>>>,
+}
+
+impl<R> Receiver for TestReceiverHandy<R>
+where
     R: FnMut() -> io::Result<(FrameType, Message)>,
 {
     async fn recv(&mut self) -> io::Result<Message> {
         let (typ, mut msg) = (self.r)()?;
         let seq_id = if typ == FrameType::Response {
-            self.secs.pop().unwrap_or(1)
+            self.secs.borrow_mut().pop().unwrap_or(1)
         } else {
             1
         };
@@ -124,19 +139,54 @@ where
     }
 }
 
-impl<W, R> TestStreamHandy<W, R>
+impl<R> TestReceiverHandy<R>
 where
-    W: FnMut(FrameType, Message) -> io::Result<()>,
     R: FnMut() -> io::Result<(FrameType, Message)>,
 {
-    pub fn new(w: W, r: R) -> Self {
-        Self {
-            s: w,
-            r,
-            cache: VecDeque::<u8>::default(),
-            secs: Vec::<u8>::default(),
-        }
+    pub fn new(r: R, secs: Rc<RefCell<Vec<u8>>>) -> Self {
+        Self { r, secs }
     }
+}
+
+fn make_handy_pair<S, R>(s: S, r: R) -> (TestSenderHandy<S>, TestReceiverHandy<R>)
+where
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+    S: FnMut(FrameType, Message) -> io::Result<()>,
+{
+    let sender = TestSenderHandy::from(s);
+    let receiver = TestReceiverHandy::new(r, sender.secs.clone());
+    (sender, receiver)
+}
+
+fn make_error_pair() -> (TestSenderError, TestReceiverError) {
+    (TestSenderError {}, TestReceiverError {})
+}
+
+fn make_bidir_stream<S, R>(
+    s: S,
+    r: R,
+) -> streams::BidirectStream<TestSenderHandy<S>, TestReceiverHandy<R>>
+where
+    S: FnMut(FrameType, Message) -> io::Result<()>,
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    make_handy_pair(s, r).into()
+}
+
+fn make_handy_client<S, R>(s: S, r: R) -> Client<TestSenderHandy<S>, TestReceiverHandy<R>>
+where
+    S: FnMut(FrameType, Message) -> io::Result<()>,
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    make_handy_pair(s, r).into()
+}
+
+fn make_handy_server<S, R>(s: S, r: R) -> Server<TestSenderHandy<S>, TestReceiverHandy<R>>
+where
+    S: FnMut(FrameType, Message) -> io::Result<()>,
+    R: FnMut() -> io::Result<(FrameType, Message)>,
+{
+    Server::new(make_handy_pair(s, r), make_test_projects())
 }
 
 fn make_test_projects() -> Vec<ide::Project> {
@@ -177,8 +227,9 @@ async fn client_list_projects() {
                 .unwrap(),
         ))
     };
-    let mut client = Client::new(TestStreamHandy::new(write, read));
-    let res = client.list_projects().await;
+    let mut client = make_handy_client(write, read);
+    let mut requester = client.get_requester();
+    let res = requester.list_projects().await;
     assert!(res.is_ok());
     let res = res.unwrap();
     assert_eq!(write_called, 1);
@@ -190,7 +241,7 @@ async fn client_list_projects() {
 #[tokio::test]
 async fn server_list_projects() {
     let prjcts = make_test_projects();
-    let server = Server::new(TestStreamError {}, prjcts.clone());
+    let server = Server::new(make_error_pair(), prjcts.clone());
     let res = server.list_projects();
     assert!(res.is_ok());
     let res = idep::ListProjectsResponse::parse_from_bytes(&res.unwrap());
@@ -218,7 +269,7 @@ async fn server_list_projects_next() {
         req.set_list_projects(idep::request::ListProjects::new());
         Ok((FrameType::Request, req.write_to_bytes().unwrap()))
     };
-    let mut server = Server::new(TestStreamHandy::new(write, read), prjcts.clone());
+    let mut server = make_handy_server(write, read);
     assert!(server.next().await.is_ok());
     assert_eq!(write_called, 1);
     assert_eq!(read_called, 1);
@@ -229,11 +280,12 @@ async fn server_client_list_projects() {
     let (left, right) = streams::VirtualStreamBuilder::new_streams();
     let prjcts = make_test_projects();
 
-    let mut client = Client::new(left);
+    let client = Client::from(left);
+    let mut requester = client.get_requester();
     let mut server = Server::new(right, prjcts.clone());
 
     let next = server.next();
-    let res = client.list_projects();
+    let res = requester.list_projects();
 
     let (next, res) = join!(next, res);
     assert!(next.is_ok());
@@ -241,25 +293,8 @@ async fn server_client_list_projects() {
     assert_eq!(res.unwrap(), prjcts);
 }
 
-fn mk_bidir_stream<R, U, Rd, Wr>(
-    r: R,
-    u: U,
-    wr: Wr,
-    rd: Rd,
-) -> streams::BidirectStream<TestStreamHandy<Wr, Rd>, R, U>
-where
-    R: FnMut(idep::Request) -> io::Result<Message>,
-    U: FnMut(idep::OnUpdate) -> io::Result<()>,
-    Wr: FnMut(FrameType, Message) -> io::Result<()>,
-    Rd: FnMut() -> io::Result<(FrameType, Message)>,
-{
-    let stream = TestStreamHandy::new(wr, rd);
-    streams::BidirectStream::new(stream, r, u)
-}
-
 #[tokio::test]
-async fn bidir_stream_request()
-{
+async fn bidir_stream_request() {
     let mut request = idep::Request::new();
     request.set_list_projects(idep::request::ListProjects::new());
     let mut on_req_called = 0;
@@ -268,15 +303,7 @@ async fn bidir_stream_request()
     let mut on_rd_called = 0;
     let prjcts = make_test_projects();
 
-    let stream = mk_bidir_stream (
-        |_| {
-            on_req_called += 1;
-            mk_test_error::<Message>()
-        },
-        |_| {
-            on_upd_called += 1;
-            mk_test_error::<()>()
-        },
+    let mut stream = make_bidir_stream(
         |typ, msg| {
             on_wr_called += 1;
             assert_eq!(typ, FrameType::Request);
@@ -285,13 +312,26 @@ async fn bidir_stream_request()
         },
         || {
             on_rd_called += 1;
-            Ok((FrameType::Response,
-                idep::ListProjectsResponse::from(&prjcts).write_to_bytes().unwrap()))
-        }
+            Ok((
+                FrameType::Response,
+                idep::ListProjectsResponse::from(&prjcts)
+                    .write_to_bytes()
+                    .unwrap(),
+            ))
+        },
     );
+    let mut sender = stream.get_sender();
+    let on_req = |_| {
+        on_req_called += 1;
+        mk_test_error::<Message>()
+    };
+    let on_upd = |_| {
+        on_upd_called += 1;
+        mk_test_error::<()>()
+    };
 
-    let rsp = stream.request(request.clone());
-    let next = stream.next();
+    let rsp = sender.send_request(request.clone());
+    let next = stream.next(Some(on_req), Some(on_upd));
 
     let (rsp, next) = join!(rsp, next);
     assert!(rsp.is_ok());

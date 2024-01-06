@@ -9,28 +9,35 @@ use tokio::sync::mpsc;
 type MessageSender = mpsc::Sender<Message>;
 type MessageReceiver = mpsc::Receiver<Message>;
 
-pub type VirtualStream = Rc<RefCell<(MessageSender, MessageReceiver)>>;
+pub type VirtualStream = (Rc<RefCell<MessageSender>>, Rc<RefCell<MessageReceiver>>);
 
 pub struct VirtualStreamBuilder {
     left: VirtualStream,
     right: VirtualStream,
 }
 
-impl Sender for mpsc::Sender<Message> {
+impl Sender for MessageSender {
     async fn send(&mut self, msg: Message) -> io::Result<()> {
         Ok(Self::send(self, msg).await.unwrap())
     }
 }
 
-impl Receiver for mpsc::Receiver<Message> {
+impl Sender for Rc<RefCell<MessageSender>> {
+    async fn send(&mut self, msg: Message) -> io::Result<()> {
+        Sender::send(&mut *self.borrow_mut(), msg).await
+    }
+}
+
+impl Receiver for MessageReceiver {
     async fn recv(&mut self) -> io::Result<Message> {
         Ok(Self::recv(self).await.unwrap())
     }
 }
 
-pub struct VirtualStreamQueue {
-    tx: mpsc::Sender<Message>,
-    rx: mpsc::Receiver<Message>,
+impl Receiver for Rc<RefCell<MessageReceiver>> {
+    async fn recv(&mut self) -> io::Result<Message> {
+        Receiver::recv(&mut *self.borrow_mut()).await
+    }
 }
 
 impl VirtualStreamBuilder {
@@ -38,8 +45,8 @@ impl VirtualStreamBuilder {
         let (ltx, lrx) = mpsc::channel::<Message>(16);
         let (rtx, rrx) = mpsc::channel::<Message>(16);
         Self {
-            left: Rc::new(RefCell::new((ltx, rrx))),
-            right: Rc::new(RefCell::new((rtx, lrx))),
+            left: (Rc::new(RefCell::new(ltx)), Rc::new(RefCell::new(rrx))),
+            right: (Rc::new(RefCell::new(rtx)), Rc::new(RefCell::new(lrx))),
         }
     }
     pub fn make_left(&self) -> VirtualStream {
@@ -186,4 +193,4 @@ impl<S: Sender> PackageSender<S> {
 
 mod bidir;
 
-pub use bidir::BidirectStream;
+pub use bidir::{BidirectStream, BidirectSender};

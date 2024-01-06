@@ -7,7 +7,7 @@ use byteorder::{ByteOrder as _, NetworkEndian as NE};
 use idep::{ListProjectsResponse, Request};
 use protobuf::Message as _;
 use std::io;
-use streams::BidirectStream;
+use streams::{BidirectSender, BidirectStream};
 
 pub type Message = Vec<u8>;
 type Projects = Vec<Project>;
@@ -35,7 +35,8 @@ impl Frame {
 }
 
 impl<C> From<&C> for Frame
-    where C: std::ops::Index<usize, Output = u8>
+where
+    C: std::ops::Index<usize, Output = u8>,
 {
     fn from(value: &C) -> Self {
         let len = vec![value[2], value[3]];
@@ -71,7 +72,7 @@ impl From<FrameType> for u8 {
     }
 }
 
-pub trait  Sender {
+pub trait Sender {
     async fn send(&mut self, msg: Message) -> io::Result<()>;
 }
 
@@ -123,22 +124,58 @@ pub struct Client<S: Sender, R: Receiver> {
     stream: BidirectStream<S, R>,
 }
 
+impl<S: Sender, R: Receiver> From<(S, R)> for Client<S, R> {
+    fn from(value: (S, R)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+pub struct ClientRequester {
+    sender: BidirectSender,
+}
+
 impl<S: Sender, R: Receiver> Client<S, R> {
     pub fn new(s: S, r: R) -> Self {
-        Self { stream: BidirectStream::new(s, r) }
+        Self {
+            stream: BidirectStream::new(s, r),
+        }
     }
 
-    //pub async fn list_projects(&mut self) -> io::Result<Projects> {
-    //    let mut req = Request::new();
-    //    req.set_list_projects(idep::request::ListProjects::new());
-    //    let send_seq = self.stream.write_request(req).await?;
-    //    let (typ, seq, rsp) = self.stream.read_package().await?;
-    //    if seq != send_seq || typ != FrameType::Response {
-    //        panic!("Unexpected response")
-    //    }
-    //    let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
-    //    Ok(rsp.into())
-    //}
+    pub fn get_requester(self) -> ClientRequester {
+        ClientRequester {
+            sender: self.stream.get_sender(),
+        }
+    }
+
+    pub async fn next(&mut self) -> io::Result<()> {
+        self.stream
+            .next(
+                Some(|req| Self::on_request(req)),
+                Some(|up| Self::on_update(up)),
+            )
+            .await
+    }
+
+    fn on_request(_req: idep::Request) -> io::Result<Message> {
+        io::Result::Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Not implemented yet",
+        ))
+    }
+
+    fn on_update(_upd: idep::OnUpdate) -> io::Result<()> {
+        Ok(()) // TODO (Shvedov)
+    }
+}
+
+impl ClientRequester {
+    pub async fn list_projects(&mut self) -> io::Result<Projects> {
+        let mut req = Request::new();
+        req.set_list_projects(idep::request::ListProjects::new());
+        let rsp = self.sender.send_request(req).await?;
+        let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
+        Ok(rsp.into())
+    }
 }
 
 pub struct Server<S: Sender, R: Receiver> {
@@ -146,10 +183,16 @@ pub struct Server<S: Sender, R: Receiver> {
     projects: Projects,
 }
 
+impl<S: Sender, R: Receiver> From<(S, R)> for Server<S, R> {
+    fn from(value: (S, R)) -> Self {
+        Self::new(value, Default::default())
+    }
+}
+
 impl<S: Sender, R: Receiver> Server<S, R> {
-    pub fn new(s: S, r: R, projects: Projects) -> Self {
+    pub fn new(stream: (S, R), projects: Projects) -> Self {
         Self {
-            stream: BidirectStream::new(s, r),
+            stream: BidirectStream::new(stream.0, stream.1),
             projects,
         }
     }
@@ -159,16 +202,28 @@ impl<S: Sender, R: Receiver> Server<S, R> {
         Ok(rsp.write_to_bytes()?)
     }
 
-    //pub async fn next(&mut self) -> io::Result<()> {
-    //    let (typ, seq, msg) = self.stream.read_package().await?;
-    //    if typ == FrameType::Request {
-    //        let req = Request::parse_from_bytes(&msg)?;
-    //        if req.has_list_projects() {
-    //            self.stream.send_response(seq, self.list_projects()?).await?;
-    //        }
-    //        Ok(())
-    //    } else {
-    //        Ok(()) // TODO(Shvedov)
-    //    }
-    //}
+    pub async fn next(&mut self) -> io::Result<()> {
+        self.stream
+            .next(
+                Some(|req| Self::on_request(req, &mut self.projects)),
+                Some(|up| Self::on_update(up)),
+            )
+            .await
+    }
+
+    fn on_request(req: idep::Request, prj: &mut Projects) -> io::Result<Message> {
+        if req.has_list_projects() {
+            let rsp = ListProjectsResponse::from(prj.as_ref());
+            Ok(rsp.write_to_bytes()?)
+        } else {
+            io::Result::Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Not implemented yet",
+            ))
+        }
+    }
+
+    fn on_update(_upd: idep::OnUpdate) -> io::Result<()> {
+        Ok(()) // TODO (Shvedov)
+    }
 }
