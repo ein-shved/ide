@@ -4,7 +4,7 @@ pub mod streams;
 
 use crate::Project;
 use byteorder::{ByteOrder as _, NetworkEndian as NE};
-use idep::{ListProjectsResponse, Request};
+use idep::{Response, Request};
 use protobuf::Message as _;
 use std::io;
 use streams::{BidirectSender, BidirectStream};
@@ -91,8 +91,8 @@ impl From<idep::Project> for Project {
     }
 }
 
-impl From<ListProjectsResponse> for Projects {
-    fn from(value: ListProjectsResponse) -> Self {
+impl From<&idep::response::ListProjects> for Projects {
+    fn from(value: &idep::response::ListProjects) -> Self {
         let it = value
             .projects
             .iter()
@@ -110,12 +110,20 @@ impl From<&Project> for idep::Project {
     }
 }
 
-impl From<&Projects> for ListProjectsResponse {
+impl From<&Projects> for idep::response::ListProjects {
     fn from(value: &Projects) -> Self {
         let mut s = Self::new();
         for proj in value.iter() {
             s.projects.push(proj.into())
         }
+        s
+    }
+}
+
+impl From<&Projects> for Response {
+    fn from(value: &Projects) -> Self {
+        let mut s = Self::new();
+        s.set_list_projects(value.into());
         s
     }
 }
@@ -141,22 +149,22 @@ impl<S: Sender, R: Receiver> Client<S, R> {
         }
     }
 
-    pub fn get_requester(self) -> ClientRequester {
+    pub fn get_requester(&self) -> ClientRequester {
         ClientRequester {
             sender: self.stream.get_sender(),
         }
     }
 
-    pub async fn next(&mut self) -> io::Result<()> {
+    pub async fn go_loop(&mut self) -> io::Result<()> {
         self.stream
-            .next(
+            .go_loop(
                 Some(|req| Self::on_request(req)),
                 Some(|up| Self::on_update(up)),
             )
             .await
     }
 
-    fn on_request(_req: idep::Request) -> io::Result<Message> {
+    fn on_request(_req: idep::Request) -> io::Result<idep::Response> {
         io::Result::Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Not implemented yet",
@@ -173,8 +181,13 @@ impl ClientRequester {
         let mut req = Request::new();
         req.set_list_projects(idep::request::ListProjects::new());
         let rsp = self.sender.send_request(req).await?;
-        let rsp = ListProjectsResponse::parse_from_bytes(&rsp)?;
-        Ok(rsp.into())
+        let rsp = Response::parse_from_bytes(&rsp)?;
+        if !rsp.has_list_projects() {
+            Err(io::Error::new(io::ErrorKind::InvalidData,
+                "Response does not contains 'list_projects' field"))
+        } else {
+            Ok(rsp.list_projects().into())
+        }
     }
 }
 
@@ -198,23 +211,22 @@ impl<S: Sender, R: Receiver> Server<S, R> {
     }
 
     pub fn list_projects(&self) -> io::Result<Message> {
-        let rsp: ListProjectsResponse = (&self.projects).into();
+        let rsp: Response = (&self.projects).into();
         Ok(rsp.write_to_bytes()?)
     }
 
     pub async fn next(&mut self) -> io::Result<()> {
         self.stream
-            .next(
+            .go_loop(
                 Some(|req| Self::on_request(req, &mut self.projects)),
                 Some(|up| Self::on_update(up)),
             )
             .await
     }
 
-    fn on_request(req: idep::Request, prj: &mut Projects) -> io::Result<Message> {
+    fn on_request(req: idep::Request, prj: &mut Projects) -> io::Result<idep::Response> {
         if req.has_list_projects() {
-            let rsp = ListProjectsResponse::from(prj.as_ref());
-            Ok(rsp.write_to_bytes()?)
+            Ok(Response::from(prj.as_ref()))
         } else {
             io::Result::Err(io::Error::new(
                 io::ErrorKind::Unsupported,

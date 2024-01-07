@@ -8,7 +8,7 @@ use tokio::{
 use std::io;
 
 type CachedRequest = oneshot::Sender<io::Result<Message>>;
-pub trait OnRequestH = FnMut(idep::Request) -> io::Result<Message>;
+pub trait OnRequestH = FnMut(idep::Request) -> io::Result<idep::Response>;
 pub trait OnUpdateH = FnMut(idep::OnUpdate) -> io::Result<()>;
 
 enum Notice {
@@ -49,29 +49,37 @@ where
             sender: sender.into(),
             receiver: receiver.into(),
             requests: std::collections::BTreeMap::<u8, CachedRequest>::default(),
-            m_sender: tx.into(),
+            m_sender: tx,
             m_receiver: rx,
         }
     }
 
-    pub async fn next<Rq, Up>(&mut self, rq: Option<Rq>, up: Option<Up>) -> io::Result<()>
+    pub async fn go_loop<Rq, Up>(
+        &mut self,
+        mut rq: Option<Rq>,
+        mut up: Option<Up>,
+    ) -> io::Result<()>
     where
         Rq: OnRequestH,
         Up: OnUpdateH,
     {
-        let result: io::Result<()>;
-        select! {
-            Ok((typ, seq_id, msg)) = self.receiver.read_package() => result = match typ {
-                FrameType::Response => self.process_response(seq_id, msg).await,
-                FrameType::Request => self.process_request(seq_id, msg, rq).await,
-                FrameType::Notify => self.process_update(msg, up).await,
-            },
-            Some(nt) = self.m_receiver.recv() => result = match nt {
-                Notice::RequestTask(req) => self.send_request(req.0, req.1).await,
-                Notice::UpdateTask(upd) => self.send_update(upd).await,
-            },
-        };
-        result
+        let mut result: io::Result<()> = Ok(());
+        while result.is_ok() {
+            select! {
+                Ok((typ, seq_id, msg)) = self.receiver.read_package() => result = match typ {
+                    FrameType::Response => self.process_response(seq_id, msg).await,
+                    FrameType::Request => self.process_request(seq_id, msg, &mut rq).await,
+                    FrameType::Notify => self.process_update(msg, &mut up).await,
+                },
+                Some(nt) = self.m_receiver.recv() => result = match nt {
+                    Notice::RequestTask(req) => self.send_request(req.0, req.1).await,
+                    Notice::UpdateTask(upd) => self.send_update(upd).await,
+                },
+            };
+        }
+        result.unwrap();
+        //result
+        Ok(())
     }
 
     pub fn get_sender(&self) -> BidirectSender {
@@ -97,23 +105,39 @@ where
         &mut self,
         seq_id: u8,
         msg: Message,
-        rq: Option<Rq>,
+        rq: &mut Option<Rq>,
     ) -> io::Result<()> {
-        let req = idep::Request::parse_from_bytes(&msg)?;
         // TODO(Shvedov) process errors
-        let rsp = rq.unwrap()(req)?;
+        let rsp = if let Some(rq) = rq {
+            let req = idep::Request::parse_from_bytes(&msg)?;
+            let rsp = rq(req);
+            match rsp {
+                Ok(rsp) => rsp,
+                Err(rsp) => {
+                    let mut err = idep::Response::new();
+                    err.status = idep::response::Status::INTERNAL_ERROR.into();
+                    err.set_error(format!("{}", rsp));
+                    err
+                }
+            }
+        } else {
+            let mut err = idep::Response::new();
+            err.status = idep::response::Status::NOT_IMPLEMENTED.into();
+            err.set_error(format!("This side does not process requests."));
+            err
+        };
         self.sender
-            .write_package(FrameType::Response, seq_id, rsp)
+            .write_package(FrameType::Response, seq_id, rsp.write_to_bytes()?)
             .await
     }
 
     async fn process_update<Up: OnUpdateH>(
         &mut self,
         msg: Message,
-        up: Option<Up>,
+        up: &mut Option<Up>,
     ) -> io::Result<()> {
         let upd = idep::OnUpdate::parse_from_bytes(&msg)?;
-        up.unwrap()(upd)
+        up.as_mut().unwrap()(upd)
     }
 
     async fn send_request(&mut self, req: idep::Request, cache: CachedRequest) -> io::Result<()> {

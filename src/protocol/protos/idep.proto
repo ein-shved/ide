@@ -31,31 +31,39 @@ message Request {
     }
 }
 
-enum Status {
-    OK = 0;
-    WRONG_PROTOCOL = 1;
-    WRONG_PROJECT = 2;
-    WRONG_PATH = 3;
-    INTERNAL_ERROR = 4;
-}
+message Response {
+    enum Status {
+        OK = 0;
+        WRONG_PROTOCOL = 1;
+        WRONG_PROJECT = 2;
+        WRONG_PATH = 3;
+        INTERNAL_ERROR = 4;
+        NOT_IMPLEMENTED = 5;
+    }
 
-message ListProjectsResponse {
-    Status status = 1;
-    repeated Project projects = 2;
-}
+    message ListProjects {
+        repeated Project projects = 2;
+    }
 
-message NewProjectResponse {
-    Status status = 1;
-    Project project = 2;
-}
+    message NewProject {
+        Project project = 2;
+    }
 
-message DeleteProjectResponse {
-    Status status = 1;
-    string path = 2;
-}
+    message DeleteProject {
+        string path = 2;
+    }
 
-message ServeProjectResponse {
+    message ServeProject {
+    }
+
     Status status = 1;
+    oneof result {
+        string error = 2;
+        ListProjects list_projects = 3;
+        NewProject new_project = 4;
+        DeleteProject delete_project = 5;
+        ServeProject serve_project = 6;
+    }
 }
 
 message OnUpdate {

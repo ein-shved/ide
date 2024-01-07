@@ -1,4 +1,4 @@
-use futures::join;
+use futures::{join, select};
 use ide::protocol::*;
 use protobuf::Message as _;
 use std::collections::VecDeque;
@@ -222,14 +222,15 @@ async fn client_list_projects() {
         read_called = read_called + 1;
         Ok((
             FrameType::Response,
-            idep::ListProjectsResponse::from(&prjcts)
+            idep::Response::from(&prjcts)
                 .write_to_bytes()
                 .unwrap(),
         ))
     };
     let mut client = make_handy_client(write, read);
     let mut requester = client.get_requester();
-    let res = requester.list_projects().await;
+    let res = requester.list_projects();
+    let (_, res) = tokio::join!(client.go_loop(), res);
     assert!(res.is_ok());
     let res = res.unwrap();
     assert_eq!(write_called, 1);
@@ -244,9 +245,9 @@ async fn server_list_projects() {
     let server = Server::new(make_error_pair(), prjcts.clone());
     let res = server.list_projects();
     assert!(res.is_ok());
-    let res = idep::ListProjectsResponse::parse_from_bytes(&res.unwrap());
-    assert!(res.is_ok());
-    assert_eq!(prjcts, Vec::<ide::Project>::from(res.unwrap()));
+    let res = idep::Response::parse_from_bytes(&res.unwrap()).unwrap();
+    let res = res.list_projects();
+    assert_eq!(prjcts, Vec::<ide::Project>::from(res));
 }
 
 #[tokio::test]
@@ -255,7 +256,8 @@ async fn server_list_projects_next() {
     let mut read_called = 0;
     let prjcts = make_test_projects();
     let write = |typ: FrameType, msg: Message| {
-        let rsp = idep::ListProjectsResponse::parse_from_bytes(&msg).unwrap();
+        let rsp = idep::Response::parse_from_bytes(&msg).unwrap();
+        let rsp = rsp.list_projects();
         let rsp: Vec<ide::Project> = rsp.into();
         assert_eq!(FrameType::Response, typ);
         assert_eq!(prjcts[0], rsp[0]);
@@ -314,7 +316,7 @@ async fn bidir_stream_request() {
             on_rd_called += 1;
             Ok((
                 FrameType::Response,
-                idep::ListProjectsResponse::from(&prjcts)
+                idep::Response::from(&prjcts)
                     .write_to_bytes()
                     .unwrap(),
             ))
@@ -323,20 +325,25 @@ async fn bidir_stream_request() {
     let mut sender = stream.get_sender();
     let on_req = |_| {
         on_req_called += 1;
-        mk_test_error::<Message>()
+        mk_test_error::<idep::Response>()
     };
     let on_upd = |_| {
         on_upd_called += 1;
         mk_test_error::<()>()
     };
 
-    let rsp = sender.send_request(request.clone());
-    let next = stream.next(Some(on_req), Some(on_upd));
+//    let rsp = sender.send_request(request.clone());
+//    let next = stream.go_loop(Some(on_req), Some(on_upd));
 
-    let (rsp, next) = join!(rsp, next);
-    assert!(rsp.is_ok());
-    assert!(next.is_ok());
-    let rsp = idep::ListProjectsResponse::parse_from_bytes(&rsp.unwrap());
 
-    assert_eq!(rsp.unwrap(), idep::ListProjectsResponse::from(&prjcts));
+    tokio::select! {
+        rsp = sender.send_request(request.clone()) => {
+            assert!(rsp.is_ok());
+            let rsp = idep::Response::parse_from_bytes(&rsp.unwrap());
+            assert_eq!(rsp.unwrap(), idep::Response::from(&prjcts));
+        },
+        _ = stream.go_loop(Some(on_req), Some(on_upd)) => {
+            panic!("Stream should never stop looping!");
+        }
+    }
 }
