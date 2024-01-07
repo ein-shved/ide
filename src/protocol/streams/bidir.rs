@@ -1,4 +1,6 @@
-use super::{idep, FrameType, Message, PackageReceiver, PackageSender, Receiver, Sender};
+use super::{
+    idep, FrameType, Message, PackageReceiver, PackageSender, Receiver, Sender,
+};
 use protobuf::Message as _;
 use tokio::{
     select,
@@ -6,6 +8,8 @@ use tokio::{
 };
 
 use std::io;
+
+use futures::Future;
 
 type CachedRequest = oneshot::Sender<io::Result<Message>>;
 pub trait OnRequestH = FnMut(idep::Request) -> io::Result<idep::Response>;
@@ -38,6 +42,43 @@ where
     }
 }
 
+pub trait OnRequest {
+    fn on_request(
+        &self,
+        _rq: idep::Request,
+    ) -> Future<Output = io::Result<idep::Response>> {
+        async move {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Processing requests are not supported",
+            ))
+        }
+    }
+}
+
+pub trait OnUpdate {
+    async fn on_update(&self, _rq: idep::OnUpdate) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unexpected update",
+        ))
+    }
+}
+
+pub trait OnError {
+    // TODO Make error type
+    async fn on_error(&self) {}
+}
+
+#[derive(Default)]
+pub struct Processor {
+    r: Option<Box<dyn OnRequest>>,
+    u: Option<Box<dyn OnUpdate>>,
+    e: Option<Box<dyn OnError>>,
+}
+
+impl Processor {}
+
 impl<S, R> BidirectStream<S, R>
 where
     S: Sender,
@@ -48,7 +89,8 @@ where
         Self {
             sender: sender.into(),
             receiver: receiver.into(),
-            requests: std::collections::BTreeMap::<u8, CachedRequest>::default(),
+            requests: std::collections::BTreeMap::<u8, CachedRequest>::default(
+            ),
             m_sender: tx,
             m_receiver: rx,
         }
@@ -88,7 +130,11 @@ where
         }
     }
 
-    async fn process_response(&mut self, seq_id: u8, msg: Message) -> io::Result<()> {
+    async fn process_response(
+        &mut self,
+        seq_id: u8,
+        msg: Message,
+    ) -> io::Result<()> {
         let req = self.requests.remove(&seq_id);
         if let Some(req) = req {
             req.send(Ok(msg)).unwrap();
@@ -140,7 +186,11 @@ where
         up.as_mut().unwrap()(upd)
     }
 
-    async fn send_request(&mut self, req: idep::Request, cache: CachedRequest) -> io::Result<()> {
+    async fn send_request(
+        &mut self,
+        req: idep::Request,
+        cache: CachedRequest,
+    ) -> io::Result<()> {
         let seq_id = self.sender.write_request(req).await?;
         self.requests.insert(seq_id, cache);
         Ok(())
@@ -156,7 +206,10 @@ pub struct BidirectSender {
 }
 
 impl BidirectSender {
-    pub async fn send_request(&mut self, req: idep::Request) -> io::Result<Message> {
+    pub async fn send_request(
+        &mut self,
+        req: idep::Request,
+    ) -> io::Result<Message> {
         let (tx, rx) = oneshot::channel::<io::Result<Message>>();
         self.sender
             .send(Notice::RequestTask((req, tx)))

@@ -304,16 +304,19 @@ async fn bidir_stream_request() {
     let mut on_wr_called = 0;
     let mut on_rd_called = 0;
     let prjcts = make_test_projects();
+    let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel(100);
 
     let mut stream = make_bidir_stream(
         |typ, msg| {
             on_wr_called += 1;
             assert_eq!(typ, FrameType::Request);
             assert_eq!(idep::Request::parse_from_bytes(&msg).unwrap(), request);
+            sync_tx.send(1);
             Ok(())
         },
-        || {
+        async || {
             on_rd_called += 1;
+            sync_rx.recv().await.unwrap();
             Ok((
                 FrameType::Response,
                 idep::Response::from(&prjcts)

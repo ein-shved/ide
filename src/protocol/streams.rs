@@ -6,6 +6,8 @@ use std::{cell::RefCell, rc::Rc};
 use std::io;
 use tokio::sync::mpsc;
 
+pub mod async_callback;
+
 type MessageSender = mpsc::Sender<Message>;
 type MessageReceiver = mpsc::Receiver<Message>;
 
