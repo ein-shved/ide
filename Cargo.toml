@@ -6,4 +6,4 @@ authors = [ "Yury Shvedov <mestofel13@gmail.com>" ]
 
 [dependencies]
 gtk4 = { version = "0.7.2", features = [ "v4_10" ] }
-paste = { }
+paste = "1.0"
