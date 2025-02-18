@@ -45,6 +45,7 @@
               path = self;
             };
             cargoLock.lockFile = "${self}/Cargo.lock";
+            meta.mainProgram = "ide";
           };
           default = ide-manager;
         };
